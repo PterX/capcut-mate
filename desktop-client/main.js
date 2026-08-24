@@ -4,6 +4,7 @@ const logger = require('./nodeapi/logger');
 
 // 引入IPC处理程序模块
 const { setupIpcHandlers } = require('./nodeapi/ipcHandlers');
+const { attachEditContextMenu } = require('./nodeapi/editContextMenu');
 
 let mainWindow;
 let ipcHandlersInitialized = false;
@@ -101,6 +102,7 @@ function isExternalUrl(url) {
 
 // 全局拦截所有 webContents 的新窗口打开行为
 app.on('web-contents-created', (event, contents) => {
+  attachEditContextMenu(contents);
   contents.setWindowOpenHandler(({ url }) => {
     if (isExternalUrl(url)) {
       shell.openExternal(url);

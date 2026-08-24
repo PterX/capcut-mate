@@ -1,4 +1,4 @@
-const { ipcMain, dialog, app } = require('electron');
+const { ipcMain, dialog, app, clipboard } = require('electron');
 
 // 引入logger模块
 const logger = require('./logger');
@@ -89,6 +89,13 @@ function setupIpcHandlers(mainWindow) {
 
   ipcMain.handle('get-app-version', async () => {
     return app.getVersion();
+  });
+
+  ipcMain.handle('clipboard-read-text', () => clipboard.readText());
+
+  ipcMain.handle('clipboard-write-text', (event, text) => {
+    clipboard.writeText(String(text || ''));
+    return true;
   });
 }
 
