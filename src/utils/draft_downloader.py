@@ -74,6 +74,8 @@ def format_draft_download_failure_message(
     if result.kind == DraftDownloadFailureKind.NETWORK_RETRY_EXHAUSTED:
         return f"{prefix}: 网络不稳定，已多次重试仍失败，请稍后重试"
     if result.kind == DraftDownloadFailureKind.RESOURCE_UNAVAILABLE:
+        if result.http_status == 416:
+            return f"{prefix}: 素材断点续传失败，请稍后重试 (HTTP 416)"
         suffix = f" (HTTP {result.http_status})" if result.http_status else ""
         return f"{prefix}: 草稿或素材不存在/URL无效{suffix}"
     if result.kind == DraftDownloadFailureKind.LOCAL_IO:
@@ -389,6 +391,60 @@ def _resume_request_headers(local_path: str) -> Tuple[Optional[Dict[str, str]], 
     if size <= 0:
         return None, 0
     return {"Range": f"bytes={size}-"}, size
+
+
+def _parse_unsatisfied_range_total(headers) -> Optional[int]:
+    """从 416 的 Content-Range: bytes */1234 解析远程文件总大小。"""
+    if not headers:
+        return None
+    raw = headers.get("Content-Range") or headers.get("content-range") or ""
+    match = re.match(r"bytes\s+\*/(\d+)\s*$", str(raw).strip(), flags=re.IGNORECASE)
+    if not match:
+        return None
+    return int(match.group(1))
+
+
+def _remove_local_file(path: str) -> None:
+    """删除续传残留文件；失败只记日志，由后续重试继续处理。"""
+    try:
+        if path and os.path.isfile(path):
+            os.remove(path)
+    except OSError as exc:
+        logger.warning("Failed to remove stale resume file %s: %s", path, exc)
+
+
+def _recover_from_unsatisfiable_range(
+    status_code: int,
+    headers,
+    resume_from: int,
+    local_path: Optional[str],
+    file_url: str,
+) -> Optional[str]:
+    """处理 Range 续传收到的 HTTP 416。
+
+    本地已下完时返回 ``complete``；半成品越界则删掉并返回 ``restart``；
+    非续传 416 返回 None，由调用方按资源不可用处理。
+    """
+    if status_code != 416 or resume_from <= 0 or not local_path:
+        return None
+    total = _parse_unsatisfied_range_total(headers)
+    local_size = _local_file_size(local_path)
+    if total is not None and total > 0 and local_size == total:
+        logger.info(
+            "HTTP 416 resume: local file already complete (%s bytes): %s",
+            local_size,
+            file_url,
+        )
+        return "complete"
+    logger.warning(
+        "HTTP 416 on resume from byte %s (remote total=%s), "
+        "discarding local file and re-downloading: %s",
+        resume_from,
+        total,
+        file_url,
+    )
+    _remove_local_file(local_path)
+    return "restart"
 
 
 def _is_download_success_status(status_code: int, resume_from: int) -> bool:
@@ -848,6 +904,31 @@ def _download_single_file(file_url: str, target_dir: str) -> None:
             response = _http_get(file_url, **get_kwargs)
             try:
                 if not _is_download_success_status(response.status_code, resume_from):
+                    range_action = _recover_from_unsatisfiable_range(
+                        response.status_code,
+                        response.headers,
+                        resume_from,
+                        full_file_path,
+                        file_url,
+                    )
+                    if range_action == "complete":
+                        return
+                    if range_action == "restart":
+                        retry_count += 1
+                        if retry_count > _MAX_RETRIES:
+                            status = response.status_code
+                            logger.error(
+                                "HTTP 416 resume recovery failed after %s retries, URL: %s",
+                                _MAX_RETRIES,
+                                file_url,
+                            )
+                            _abort(
+                                DraftDownloadFailureKind.NETWORK_RETRY_EXHAUSTED,
+                                detail=f"HTTP {status} after {_MAX_RETRIES} retries",
+                                url=file_url,
+                                http_status=status,
+                            )
+                        continue
                     if not _is_retryable_http_status(response.status_code):
                         status = response.status_code
                         logger.error(
@@ -1188,6 +1269,30 @@ def _download_remote_material_raising(
 
             response = _http_get(file_url, **get_kwargs)
             if not _is_download_success_status(response.status_code, resume_from):
+                range_action = _recover_from_unsatisfiable_range(
+                    response.status_code,
+                    response.headers,
+                    resume_from,
+                    local_path,
+                    file_url,
+                )
+                if range_action == "complete":
+                    return local_path
+                if range_action == "restart":
+                    if attempt >= _MAX_RETRIES:
+                        status = response.status_code
+                        logger.error(
+                            "HTTP 416 resume recovery failed after %s retries: %s",
+                            _MAX_RETRIES,
+                            file_url,
+                        )
+                        _abort(
+                            DraftDownloadFailureKind.NETWORK_RETRY_EXHAUSTED,
+                            detail=f"HTTP {status} after {_MAX_RETRIES} retries",
+                            url=file_url,
+                            http_status=status,
+                        )
+                    continue
                 if not _is_retryable_http_status(response.status_code):
                     status = response.status_code
                     logger.error(
@@ -1315,6 +1420,32 @@ def _download_remote_file_raising(file_url: str, local_path: str) -> None:
 
             response = _http_get(file_url, **get_kwargs)
             if not _is_download_success_status(response.status_code, resume_from):
+                range_action = _recover_from_unsatisfiable_range(
+                    response.status_code,
+                    response.headers,
+                    resume_from,
+                    local_path,
+                    file_url,
+                )
+                if range_action == "complete":
+                    response.close()
+                    return
+                if range_action == "restart":
+                    response.close()
+                    if attempt >= _MAX_RETRIES:
+                        status = response.status_code
+                        logger.error(
+                            "HTTP 416 resume recovery failed after %s retries: %s",
+                            _MAX_RETRIES,
+                            file_url,
+                        )
+                        _abort(
+                            DraftDownloadFailureKind.NETWORK_RETRY_EXHAUSTED,
+                            detail=f"HTTP {status} after {_MAX_RETRIES} retries",
+                            url=file_url,
+                            http_status=status,
+                        )
+                    continue
                 if not _is_retryable_http_status(response.status_code):
                     status = response.status_code
                     logger.error(

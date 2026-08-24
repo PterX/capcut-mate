@@ -50,6 +50,17 @@ class TestFormatDraftDownloadFailureMessage:
             == "草稿下载失败: 草稿或素材不存在/URL无效 (HTTP 404)"
         )
 
+    def test_resource_unavailable_416_uses_resume_message(self) -> None:
+        result = dd.DraftDownloadResult(
+            ok=False,
+            kind=dd.DraftDownloadFailureKind.RESOURCE_UNAVAILABLE,
+            http_status=416,
+        )
+        assert (
+            dd.format_draft_download_failure_message(result)
+            == "草稿下载失败: 素材断点续传失败，请稍后重试 (HTTP 416)"
+        )
+
     def test_local_io(self) -> None:
         result = dd.DraftDownloadResult(
             ok=False,

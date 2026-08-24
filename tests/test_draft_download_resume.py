@@ -93,6 +93,63 @@ class TestResumeHelpers:
         assert dd._is_download_success_status(206, 10) is True
         assert dd._is_download_success_status(206, 0) is False
         assert dd._is_download_success_status(404, 10) is False
+        assert dd._is_download_success_status(416, 10) is False
+
+    def test_parse_unsatisfied_range_total(self) -> None:
+        assert dd._parse_unsatisfied_range_total({"Content-Range": "bytes */337464"}) == 337464
+        assert dd._parse_unsatisfied_range_total({"content-range": "bytes */12"}) == 12
+        assert dd._parse_unsatisfied_range_total({"Content-Range": "bytes 0-10/11"}) is None
+        assert dd._parse_unsatisfied_range_total({}) is None
+        assert dd._parse_unsatisfied_range_total(None) is None
+
+    def test_recover_416_complete_when_local_covers_remote(self, tmp_path) -> None:
+        path = tmp_path / "done.png"
+        path.write_bytes(b"x" * 10)
+        action = dd._recover_from_unsatisfiable_range(
+            416,
+            {"Content-Range": "bytes */10"},
+            10,
+            str(path),
+            "https://x.test/done.png",
+        )
+        assert action == "complete"
+        assert path.read_bytes() == b"x" * 10
+
+    def test_recover_416_restart_deletes_stale_file(self, tmp_path) -> None:
+        path = tmp_path / "stale.png"
+        path.write_bytes(b"x" * 10)
+        action = dd._recover_from_unsatisfiable_range(
+            416,
+            {"Content-Range": "bytes */8"},
+            10,
+            str(path),
+            "https://x.test/stale.png",
+        )
+        assert action == "restart"
+        assert not path.exists()
+
+    def test_recover_416_restart_without_content_range(self, tmp_path) -> None:
+        path = tmp_path / "part.png"
+        path.write_bytes(b"partial")
+        action = dd._recover_from_unsatisfiable_range(
+            416, {}, 7, str(path), "https://x.test/part.png"
+        )
+        assert action == "restart"
+        assert not path.exists()
+
+    def test_recover_416_ignored_when_not_resuming(self, tmp_path) -> None:
+        path = tmp_path / "a.png"
+        path.write_bytes(b"abc")
+        assert (
+            dd._recover_from_unsatisfiable_range(
+                416, {"Content-Range": "bytes */3"}, 0, str(path), "https://x.test/a.png"
+            )
+            is None
+        )
+        assert (
+            dd._recover_from_unsatisfiable_range(404, {}, 10, str(path), "https://x.test/a.png")
+            is None
+        )
 
 
 class TestDownloadSingleFileResume:
@@ -219,6 +276,62 @@ class TestDownloadSingleFileResume:
                 assert f.read() == b"PNGDATA"
 
 
+    def test_416_on_complete_local_file_skips_redownload(self, no_sleep) -> None:
+        """本地已是完整文件时，416 + Content-Range 视为已完成，不再失败。"""
+        file_url = self._url("assets/images/pic.png")
+        with tempfile.TemporaryDirectory() as td:
+            out = os.path.join(td, "assets", "images", "pic.png")
+            os.makedirs(os.path.dirname(out), exist_ok=True)
+            with open(out, "wb") as f:
+                f.write(b"COMPLETE")
+            resp_416 = _stream_response(
+                [], status=416, headers={"Content-Range": "bytes */8"}
+            )
+            with patch.object(dd, "requests") as m_req:
+                m_req.get.return_value = resp_416
+                m_req.exceptions = requests.exceptions
+                assert dd.download_single_file(file_url, td) is True
+            m_req.get.assert_called_once()
+            assert _range_from_call(m_req.get.call_args) == "bytes=8-"
+            with open(out, "rb") as f:
+                assert f.read() == b"COMPLETE"
+
+    def test_416_on_stale_local_file_redownloads_without_range(self, no_sleep) -> None:
+        """本地半成品比远程大或越界时，丢掉文件后整文件重下。"""
+        file_url = self._url("assets/images/pic.png")
+        resp_416 = _stream_response(
+            [], status=416, headers={"Content-Range": "bytes */4"}
+        )
+        resp_full = _stream_response([b"FULL"], status=200)
+        with tempfile.TemporaryDirectory() as td:
+            out = os.path.join(td, "assets", "images", "pic.png")
+            os.makedirs(os.path.dirname(out), exist_ok=True)
+            with open(out, "wb") as f:
+                f.write(b"STALEFILE")
+            with patch.object(dd, "requests") as m_req:
+                m_req.get.side_effect = [resp_416, resp_full]
+                m_req.exceptions = requests.exceptions
+                assert dd.download_single_file(file_url, td) is True
+            assert m_req.get.call_count == 2
+            assert _range_from_call(m_req.get.call_args_list[0]) == "bytes=9-"
+            assert "Range" not in (m_req.get.call_args_list[1].kwargs.get("headers") or {})
+            with open(out, "rb") as f:
+                assert f.read() == b"FULL"
+
+    def test_416_without_resume_is_still_resource_unavailable(self, no_sleep) -> None:
+        file_url = self._url("assets/images/pic.png")
+        resp_416 = _stream_response([], status=416)
+        with tempfile.TemporaryDirectory() as td:
+            with patch.object(dd, "requests") as m_req:
+                m_req.get.return_value = resp_416
+                m_req.exceptions = requests.exceptions
+                with pytest.raises(dd.DraftDownloadAbort) as ei:
+                    dd._download_single_file(file_url, td)
+            assert ei.value.kind == dd.DraftDownloadFailureKind.RESOURCE_UNAVAILABLE
+            assert ei.value.http_status == 416
+            assert m_req.get.call_count == 1
+
+
 class TestDownloadRemoteMaterialResume:
     def test_extensionless_cdn_url_still_resumes(self, no_sleep) -> None:
         """无扩展名的图片 CDN URL 也走续传（本函数只下载素材）。"""
@@ -257,6 +370,34 @@ class TestDownloadRemoteMaterialResume:
             assert "Range" not in first_headers
             m_req.get.assert_called_once()
 
+    def test_416_on_stale_material_redownloads_without_range(self, no_sleep) -> None:
+        url = "https://cdn.example.com/photo.png"
+        first = _stream_response(
+            [b"img-"],
+            headers={"Content-Type": "image/png"},
+            raise_after=requests.exceptions.ChunkedEncodingError("truncated"),
+        )
+        stale = _stream_response(
+            [],
+            status=416,
+            headers={"Content-Type": "image/png", "Content-Range": "bytes */3"},
+        )
+        full = _stream_response(
+            [b"PNG"],
+            status=200,
+            headers={"Content-Type": "image/png"},
+        )
+        with tempfile.TemporaryDirectory() as td:
+            with patch.object(dd, "requests") as m_req:
+                m_req.get.side_effect = [first, stale, full]
+                m_req.exceptions = requests.exceptions
+                path = dd._download_remote_material(url, td, "images", "photo", ".png")
+            assert path is not None
+            with open(path, "rb") as f:
+                assert f.read() == b"PNG"
+            assert _range_from_call(m_req.get.call_args_list[1]) == "bytes=4-"
+            assert "Range" not in (m_req.get.call_args_list[2].kwargs.get("headers") or {})
+
 
 class TestDownloadRemoteFileResume:
     def test_mp4_retry_appends_on_206(self, no_sleep) -> None:
@@ -290,4 +431,35 @@ class TestDownloadRemoteFileResume:
             assert "Range" not in (m_req.get.call_args_list[1].kwargs.get("headers") or {})
             with open(out, "rb") as f:
                 assert f.read() == b"ZZZ"
+
+    def test_416_on_complete_mp4_skips_redownload(self, no_sleep) -> None:
+        resp_416 = _stream_response(
+            [], status=416, headers={"Content-Range": "bytes */3"}
+        )
+        with tempfile.TemporaryDirectory() as td:
+            out = os.path.join(td, "a.mp4")
+            with open(out, "wb") as f:
+                f.write(b"AAA")
+            with patch.object(dd, "requests") as m_req:
+                m_req.get.return_value = resp_416
+                m_req.exceptions = requests.exceptions
+                assert dd._download_remote_file("https://x.test/a.mp4", out) is True
+            m_req.get.assert_called_once()
+            with open(out, "rb") as f:
+                assert f.read() == b"AAA"
+
+    def test_416_on_stale_mp4_redownloads_without_range(self, no_sleep) -> None:
+        resp_416 = _stream_response([], status=416)
+        resp_full = _stream_response([b"NEW"], status=200)
+        with tempfile.TemporaryDirectory() as td:
+            out = os.path.join(td, "a.mp4")
+            with open(out, "wb") as f:
+                f.write(b"OLDDATA")
+            with patch.object(dd, "requests") as m_req:
+                m_req.get.side_effect = [resp_416, resp_full]
+                m_req.exceptions = requests.exceptions
+                assert dd._download_remote_file("https://x.test/a.mp4", out) is True
+            assert "Range" not in (m_req.get.call_args_list[1].kwargs.get("headers") or {})
+            with open(out, "rb") as f:
+                assert f.read() == b"NEW"
 

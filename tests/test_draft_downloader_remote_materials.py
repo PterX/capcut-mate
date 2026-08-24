@@ -119,6 +119,7 @@ class TestRetryHelpers:
         [
             (404, False),
             (400, False),
+            (416, False),
             (500, False),
             (408, True),
             (429, True),
