@@ -1,8 +1,9 @@
 import { useEffect } from 'react';
+import { Scissors, Copy, Clipboard, Trash, CheckAll } from 'react-bootstrap-icons';
 import { shortcutModifierLabel } from '../utils/draftUrlInput';
 
-const MENU_WIDTH = 220;
-const MENU_ESTIMATED_HEIGHT = 220;
+const MENU_WIDTH = 240;
+const MENU_ESTIMATED_HEIGHT = 240;
 
 function clampPosition(x, y) {
   const maxX = Math.max(8, window.innerWidth - MENU_WIDTH - 8);
@@ -19,13 +20,13 @@ function TextEditContextMenu({
   canCut,
   canCopy,
   canPaste,
+  canDelete,
   canSelectAll,
-  canClear,
   onCut,
   onCopy,
   onPaste,
+  onDelete,
   onSelectAll,
-  onClear,
   onClose,
 }) {
   const mod = shortcutModifierLabel();
@@ -49,12 +50,12 @@ function TextEditContextMenu({
   }, [onClose]);
 
   const items = [
-    { key: 'cut', label: '剪切', shortcut: `${mod}+X`, enabled: canCut, action: onCut },
-    { key: 'copy', label: '复制', shortcut: `${mod}+C`, enabled: canCopy, action: onCopy },
-    { key: 'paste', label: '粘贴', shortcut: `${mod}+V`, enabled: canPaste, action: onPaste },
+    { key: 'cut', label: '剪切', shortcut: `${mod}+X`, enabled: canCut, action: onCut, Icon: Scissors },
+    { key: 'copy', label: '复制', shortcut: `${mod}+C`, enabled: canCopy, action: onCopy, Icon: Copy },
+    { key: 'paste', label: '粘贴', shortcut: `${mod}+V`, enabled: canPaste, action: onPaste, Icon: Clipboard },
+    { key: 'delete', label: '删除', enabled: canDelete, action: onDelete, Icon: Trash },
     { key: 'sep-1', separator: true },
-    { key: 'selectAll', label: '全选', shortcut: `${mod}+A`, enabled: canSelectAll, action: onSelectAll },
-    { key: 'clear', label: '清空', enabled: canClear, action: onClear },
+    { key: 'selectAll', label: '全选', shortcut: `${mod}+A`, enabled: canSelectAll, action: onSelectAll, Icon: CheckAll },
   ];
 
   return (
@@ -84,7 +85,10 @@ function TextEditContextMenu({
                   onClose();
                 }}
               >
-                <span>{item.label}</span>
+                <span className="text-edit-context-icon" aria-hidden="true">
+                  <item.Icon size={15} />
+                </span>
+                <span className="text-edit-context-label">{item.label}</span>
                 {item.shortcut ? <span className="text-edit-context-shortcut">{item.shortcut}</span> : null}
               </button>
             </li>

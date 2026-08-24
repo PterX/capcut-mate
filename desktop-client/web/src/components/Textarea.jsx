@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import TextEditContextMenu from './TextEditContextMenu';
 import electronService from '../services/electronService';
 import {
-  isElectronRenderer,
   isMacPlatform,
   normalizeDraftUrlPaste,
   replaceSelection,
@@ -17,7 +16,6 @@ function Textarea({ value, onChange }) {
   const [textareaHeight, setTextareaHeight] = useState(`${MIN_HEIGHT}px`);
   const [menu, setMenu] = useState(null);
   const mod = shortcutModifierLabel();
-  const useAppContextMenu = !isElectronRenderer();
 
   const closeMenu = useCallback(() => setMenu(null), []);
 
@@ -85,9 +83,6 @@ function Textarea({ value, onChange }) {
   };
 
   const handleContextMenu = (event) => {
-    if (!useAppContextMenu) {
-      return;
-    }
     event.preventDefault();
     const el = textareaRef.current;
     if (el && document.activeElement !== el) {
@@ -127,13 +122,15 @@ function Textarea({ value, onChange }) {
     }
   };
 
-  const handleSelectAll = () => {
-    textareaRef.current?.select();
+  const handleDelete = () => {
+    if (!selectedText()) {
+      return;
+    }
+    applyInsert('');
   };
 
-  const handleClear = () => {
-    onChange('');
-    requestAnimationFrame(() => focusAndSetCaret(0));
+  const handleSelectAll = () => {
+    textareaRef.current?.select();
   };
 
   useEffect(() => {
@@ -164,24 +161,24 @@ https://example.com/get_draft?draft_id=草稿2`}
           inputMode="url"
         />
         <p className="textarea-hint">
-          每行一个地址。右键可复制、粘贴、全选
+          每行一个地址。右键可复制、粘贴、删除、全选
           {isMacPlatform() ? '；macOS 使用 ⌘，Ctrl+点击也可打开菜单' : '；Windows 使用 Ctrl'}。
         </p>
       </div>
-      {useAppContextMenu && menu ? (
+      {menu ? (
         <TextEditContextMenu
           x={menu.x}
           y={menu.y}
           canCut={menu.hasSelection}
           canCopy={menu.hasSelection}
           canPaste
+          canDelete={menu.hasSelection}
           canSelectAll={menu.hasValue}
-          canClear={menu.hasValue}
           onCut={handleCut}
           onCopy={handleCopy}
           onPaste={handleMenuPaste}
+          onDelete={handleDelete}
           onSelectAll={handleSelectAll}
-          onClear={handleClear}
           onClose={closeMenu}
         />
       ) : null}

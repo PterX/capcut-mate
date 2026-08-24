@@ -23,8 +23,10 @@ module.exports = {
     icon: "assets/icons/logo.ico",
     target: "nsis",
     artifactName: "capcut-mate-windows-x64-installer.exe",
-    // 禁用代码签名
-    signingHashAlgorithms: []
+    // 禁用代码签名（避免本机无符号链接权限时解压 winCodeSign 失败）
+    signingHashAlgorithms: [],
+    signAndEditExecutable: false,
+    signDlls: false
   },
   nsis: {
     oneClick: false,

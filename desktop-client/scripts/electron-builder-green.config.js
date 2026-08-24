@@ -7,6 +7,9 @@ module.exports = {
   win: {
     icon: "assets/icons/logo.ico",
     artifactName: "capcut-mate-windows-x64-green.zip",
+    signingHashAlgorithms: [],
+    signAndEditExecutable: false,
+    signDlls: false
   },
   mac: {
     icon: "assets/icons/logo.icns",
