@@ -4,6 +4,7 @@ module.exports = {
   directories: {
     output: "dist"
   },
+  afterPack: require("./afterPackWinIcon"),
   win: {
     icon: "assets/icons/logo.ico",
     artifactName: "capcut-mate-windows-x64-green.zip",

@@ -7,6 +7,7 @@ module.exports = {
   directories: {
     output: "dist"
   },
+  afterPack: require("./afterPackWinIcon"),
   files: [
     "**/*",
     // "!node_modules",
@@ -23,7 +24,7 @@ module.exports = {
     icon: "assets/icons/logo.ico",
     target: "nsis",
     artifactName: "capcut-mate-windows-x64-installer.exe",
-    // 禁用代码签名（避免本机无符号链接权限时解压 winCodeSign 失败）
+    // 跳过 winCodeSign（本机解压会因符号链接权限失败）；exe 图标由 afterPack 写入
     signingHashAlgorithms: [],
     signAndEditExecutable: false,
     signDlls: false
@@ -31,6 +32,9 @@ module.exports = {
   nsis: {
     oneClick: false,
     allowToChangeInstallationDirectory: true,
+    installerIcon: "assets/icons/logo.ico",
+    uninstallerIcon: "assets/icons/logo.ico",
+    shortcutName: "剪映小助手",
   },
   mac: {
     icon: "assets/icons/logo.icns",

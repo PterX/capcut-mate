@@ -6,6 +6,11 @@ const logger = require('./nodeapi/logger');
 const { setupIpcHandlers } = require('./nodeapi/ipcHandlers');
 const { attachEditContextMenu } = require('./nodeapi/editContextMenu');
 
+// Windows 任务栏 / 快捷方式图标依赖 AppUserModelId，需与 electron-builder appId 一致
+if (process.platform === 'win32') {
+  app.setAppUserModelId('com.gogoshine.capcut-mate');
+}
+
 let mainWindow;
 let ipcHandlersInitialized = false;
 
