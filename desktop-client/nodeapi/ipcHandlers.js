@@ -37,7 +37,7 @@ function setupIpcHandlers(mainWindow) {
       return await getDraftUrls(remoteUrl, mainWindow);
     } catch (error) {
       logger.error(`[error] get draft url:`, error);
-      return {};
+      return { code: -1, message: error.message || "获取草稿地址失败" };
     }
   });
 

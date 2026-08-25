@@ -228,11 +228,15 @@ async function ensureWindowsDraftFilesWritable(rootDir) {
 
 const MAX_DOWNLOAD_ATTEMPTS = 10;
 
-/** 拉取 get_draft：首次请求 + 2 次重试（共 3 次），自开始起硬截止 3000ms 内必须结束 */
+/**
+ * 拉取 get_draft：最多 3 次。
+ * 远端接口 TTFB 常见 0.9s–2s+（冷连接含 DNS/TLS），旧值 800ms/3s 会把正常响应误判为失败，
+ * 且超时中断连接后重试无法复用 keep-alive，表现为「多试几次才偶尔成功」。
+ */
 const GET_DRAFT_FETCH_MAX_ATTEMPTS = 3;
-const GET_DRAFT_FETCH_DEADLINE_MS = 3000;
-const GET_DRAFT_FETCH_PER_ATTEMPT_MAX_MS = 800;
-const GET_DRAFT_FETCH_BACKOFF_MS = [120, 200];
+const GET_DRAFT_FETCH_DEADLINE_MS = 30000;
+const GET_DRAFT_FETCH_PER_ATTEMPT_MAX_MS = 15000;
+const GET_DRAFT_FETCH_BACKOFF_MS = [400, 1000];
 
 /** 网关/限流等暂时不可用，退避重试有效（不含 500 等通常表示持久故障的状态） */
 const RETRYABLE_TRANSIENT_HTTP_STATUSES = new Set([408, 429, 502, 503, 504]);
@@ -333,6 +337,45 @@ function isRetryableDownloadError(error) {
   return false;
 }
 
+function isTimeoutError(error) {
+  const code = error?.code;
+  if (code === "ECONNABORTED" || code === "ETIMEDOUT" || code === "ERR_CANCELED") {
+    return true;
+  }
+  const name = error?.name;
+  if (name === "CanceledError" || name === "AbortError") {
+    return true;
+  }
+  return /timeout of \d+ms exceeded/i.test(String(error?.message || ""));
+}
+
+/** get_draft 元数据请求便宜，5xx 也值得短退避重试 */
+function isRetryableGetDraftError(error) {
+  const status = getHttpStatusFromError(error);
+  if (status !== null && status >= 500) return true;
+  return isRetryableDownloadError(error);
+}
+
+function formatGetDraftError(error, url) {
+  if (isTimeoutError(error)) {
+    return "请求超时，请检查网络后重试";
+  }
+  if (error?.code === "ECONNREFUSED") {
+    return `无法连接到服务器: ${url}`;
+  }
+  if (error?.code === "ENOTFOUND") {
+    return `域名无法解析: ${url}`;
+  }
+  if (error?.code === "ECONNRESET" || error?.code === "EAI_AGAIN") {
+    return "网络连接中断，请稍后重试";
+  }
+  const status = getHttpStatusFromError(error);
+  if (status !== null) {
+    return `服务器返回错误 (${status})`;
+  }
+  return error?.message || "获取草稿地址失败";
+}
+
 async function requestGetDraftOnce(remoteUrl, timeoutMs) {
   return axios({
     ...axiosConfig,
@@ -374,7 +417,7 @@ async function fetchGetDraftWithRetry(remoteUrl) {
       const willRetry =
         attempt < GET_DRAFT_FETCH_MAX_ATTEMPTS &&
         timeLeftMs() > 0 &&
-        isRetryableDownloadError(error);
+        isRetryableGetDraftError(error);
       if (willRetry) {
         logger.warn(
           `[warn] get draft url attempt ${attempt}/${GET_DRAFT_FETCH_MAX_ATTEMPTS} failed: ${error.message}`
@@ -385,7 +428,9 @@ async function fetchGetDraftWithRetry(remoteUrl) {
     }
   }
 
-  throw lastError;
+  const timeoutError = new Error("获取草稿地址超时");
+  timeoutError.code = "ETIMEDOUT";
+  throw lastError || timeoutError;
 }
 
 async function retryDownloadTask(task, options = {}) {
@@ -764,20 +809,6 @@ async function appendHistoryRecord(entry) {
   }
 }
 
-// 更精确的错误处理
-function errorHandler(error = {}, url = "") {
-  if (error.code === "ECONNREFUSED") {
-    throw new Error(`[error] not connect to server: ${url}`);
-  } else if (error.code === "ENOTFOUND") {
-    throw new Error(`[error] domain not found: ${url}`);
-  } else if (error.response) {
-    // 服务器返回了错误状态码（如4xx, 5xx）
-    throw new Error(`[error] server error (${error.response.status}): ${url}`);
-  } else {
-    throw error; // 重新抛出其他未知错误
-  }
-}
-
 async function getDraftUrls(remoteUrl, parentWindow) {
   logger.info("[info] get draft url");
   try {
@@ -785,10 +816,6 @@ async function getDraftUrls(remoteUrl, parentWindow) {
 
     // 检查HTTP状态码
     if (response.status !== 200) {
-      await appendDownloadLog(
-        { level: "error", message: `获取草稿地址信息失败` },
-        parentWindow
-      );
       throw new Error(
         `[error] [draft url] request failed, status code: ${response.status}`
       );
@@ -796,7 +823,17 @@ async function getDraftUrls(remoteUrl, parentWindow) {
     logger.info("[success] get draft url");
     return response.data;
   } catch (error) {
-    errorHandler(error, remoteUrl);
+    const friendly = formatGetDraftError(error, remoteUrl);
+    logger.error(`[error] get draft url: ${friendly}`, error);
+    try {
+      await appendDownloadLog(
+        { level: "error", message: `获取文件列表失败：${friendly}` },
+        parentWindow
+      );
+    } catch (logError) {
+      logger.warn("[warn] failed to append get_draft error log:", logError?.message);
+    }
+    throw new Error(friendly);
   }
 }
 
@@ -1020,7 +1057,6 @@ async function downloadNotJsonFile(
     });
   } catch (error) {
     logger.error(`下载非JSON文件失败: ${fileUrl}`, error);
-    // 不使用errorHandler，直接抛出错误以便上层进行重试
     throw error;
   }
 }
