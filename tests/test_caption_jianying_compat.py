@@ -41,7 +41,8 @@ def test_caption_material_matches_jianying_schema():
     assert material["words"] == {"end_time": [], "start_time": [], "text": []}
     assert "caption_template_info" in material
     assert style["range"] == [0, 5]
-    assert style["font"] == {"id": "", "path": ""}
+    assert style["font"] == {"id": "", "path": "D:"}
+    assert material["font_path"] == "D:"
     assert "alpha" not in style["fill"]
     assert "bold" not in style
     assert "strokes" not in style
@@ -74,12 +75,11 @@ def test_caption_custom_font_writes_fonts_array_and_resource_id():
     assert material["fonts"][0]["resource_id"] == expected_id
     assert material["fonts"][0]["title"] == "三极宋黑体超粗"
     assert style["font"]["id"] == expected_id
-    assert style["font"]["path"] == ""
+    assert style["font"]["path"] == "D:"
+    assert material["font_path"] == "D:"
+    assert material["fonts"][0]["path"] == "D:"
     assert style["size"] == 12
     assert style["range"] == [0, 5]
-
-
-def test_caption_transform_y_matches_half_canvas_scale_from_demo():
     """demo1-2: UI Y=500 → transform.y ≈ 500/1080。"""
     _, _, segment = _add_material(transform_y=500)
     clip = segment.export_json()["clip"]

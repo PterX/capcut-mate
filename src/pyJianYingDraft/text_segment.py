@@ -27,10 +27,12 @@ def _style_range_end(text: str) -> int:
 
 
 def _font_content_json(font: Optional[EffectMeta]) -> Dict[str, str]:
-    """styles[].font：系统字体 id 为空；自定义字体用 resource_id，path 留空由剪映按 id 解析。"""
+    """styles[].font：系统字体 id 为空；自定义字体用 resource_id。
+    path 必须为 \"D:\"，剪映打开后会自动搜索并改写为真实字体路径。
+    """
     if font is None:
-        return {"id": "", "path": ""}
-    return {"id": font.resource_id, "path": ""}
+        return {"id": "", "path": "D:"}
+    return {"id": font.resource_id, "path": "D:"}
 
 
 def _build_fonts_material_entry(font: EffectMeta) -> Dict[str, Any]:
@@ -41,7 +43,7 @@ def _build_fonts_material_entry(font: EffectMeta) -> Dict[str, Any]:
         "effect_id": font.resource_id,
         "file_uri": "",
         "id": str(uuid.uuid4()).upper(),
-        "path": "",
+        "path": "D:",
         "request_id": "",
         "resource_id": font.resource_id,
         "source_platform": 0,
@@ -517,7 +519,7 @@ class TextSegment(VisualSegment):
             if self.effect:
                 content_json["styles"][0]["effectStyle"] = {
                     "id": self.effect.effect_id,
-                    "path": ""
+                    "path": "C:"  # 花字占位路径，剪映会自行解析
                 }
             if self.shadow:
                 content_json["styles"][0]["shadows"] = [self.shadow.export_json()]
@@ -558,7 +560,7 @@ class TextSegment(VisualSegment):
             border_width = self.border.width
 
         fonts_list: List[Dict[str, Any]] = []
-        font_path = ""
+        font_path = "D:"
         font_resource_id = ""
         if self.font:
             font_resource_id = self.font.resource_id

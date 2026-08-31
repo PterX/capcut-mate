@@ -788,12 +788,14 @@ def _find_keyword_ranges(text: str, keywords: str) -> List[Tuple[int, int]]:
 
 
 def _font_style_json(font_meta) -> Optional[dict]:
-    """将 EffectMeta 转为 styles[].font 结构（path 留空，由剪映按 resource_id 解析）。"""
+    """将 EffectMeta 转为 styles[].font 结构。
+    path 必须为 \"D:\"，剪映打开后会自动搜索并改写为真实字体路径。
+    """
     if font_meta is None:
         return None
     return {
         "id": font_meta.resource_id,
-        "path": "",
+        "path": "D:",
     }
 
 
@@ -1030,7 +1032,7 @@ def apply_keyword_highlight(
                 if body_font_json is not None:
                     highlight_style["font"] = dict(body_font_json)
                 elif text_segment.font is None:
-                    highlight_style["font"] = {"id": "", "path": ""}
+                    highlight_style["font"] = {"id": "", "path": "D:"}
 
             text_segment.extra_styles.append(highlight_style)
             start_pos = end_pos
