@@ -83,7 +83,7 @@ def test_default_alignment_remains_center_horizontal():
     _, material = _add_and_export_material(1)
     assert material["alignment"] == 1
     assert material["typesetting"] == 0
-    assert material["type"] == "subtitle"
+    assert material["type"] == "text"
 
 
 def test_horizontal_alignment_keeps_existing_style_fields():
@@ -101,7 +101,7 @@ def test_horizontal_alignment_keeps_existing_style_fields():
 
     assert material["alignment"] == 0
     assert material["typesetting"] == 0
-    assert material["type"] == "subtitle"
+    assert material["type"] == "text"
     assert base_style["size"] == 22
     assert base_style["underline"] is True
     assert base_style["italic"] is True
@@ -121,7 +121,7 @@ def test_vertical_alignment_does_not_break_font_size_or_wrapping():
 
     assert material["alignment"] == 1
     assert material["typesetting"] == 1
-    assert material["type"] == "subtitle"
+    assert material["type"] == "text"
     assert base_style["size"] == 18.0
 
 

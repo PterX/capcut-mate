@@ -371,8 +371,8 @@ class ScriptFile:
                     self.materials.audio_effects.append(effect)
             self.materials.speeds.append(segment.speed)
         elif isinstance(segment, TextSegment):
-            # 出入场等动画
-            if (segment.animations_instance is not None) and (segment.animations_instance not in self.materials):
+            # 出入场等动画（含空 sticker_animation，对齐剪映文本片段引用）
+            if segment.animations_instance is not None and segment.animations_instance not in self.materials:
                 self.materials.animations.append(segment.animations_instance)
             # 气泡效果
             if segment.bubble is not None:
