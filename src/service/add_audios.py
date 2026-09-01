@@ -21,6 +21,7 @@ import os
 from src.utils import helper
 from src.utils.download import download
 import config
+from src.utils.media import use_remote_media_url
 import json
 import asyncio
 import time
@@ -64,7 +65,7 @@ def _prepare_audios_local_files(draft_url: str, audio_infos: str) -> List[Dict[s
     validate_audio_data(audios, draft_id)
 
     # 远程 URL 直写模式：跳过本地下载
-    if config.USE_REMOTE_MEDIA_URL:
+    if use_remote_media_url():
         logger.info(f"USE_REMOTE_MEDIA_URL enabled, skip audio download, count: {len(audios)}")
         return audios
 
@@ -85,7 +86,7 @@ def _add_audios_internal(
     script: ScriptFile = DRAFT_CACHE[draft_id]
 
     # 本地下载模式才创建音频资源目录
-    draft_audio_dir = "" if config.USE_REMOTE_MEDIA_URL else create_audio_directory(draft_id)
+    draft_audio_dir = "" if use_remote_media_url() else create_audio_directory(draft_id)
 
     if prepared_audios is not None:
         audios = prepared_audios
@@ -349,7 +350,7 @@ def add_audio_to_draft(
     """
     try:
         # 远程 URL 直写模式：草稿中保留原始 URL，时长取自请求参数，不做本地下载/探测
-        if config.USE_REMOTE_MEDIA_URL:
+        if use_remote_media_url():
             audio_path = audio["audio_url"]
             logger.info(f"USE_REMOTE_MEDIA_URL enabled, using audio URL: {audio_path}")
             fallback_duration = int(audio.get("duration") or (audio["end"] - audio["start"]))
@@ -416,7 +417,7 @@ def get_audio_actual_duration(
     - 远程 URL 直写模式：使用调用方传入的 fallback_duration（通常来自请求参数）。
     """
     # 远程 URL 直写模式：不进行本地素材探测
-    if config.USE_REMOTE_MEDIA_URL:
+    if use_remote_media_url():
         resolved = int(fallback_duration or 0)
         if resolved <= 0:
             raise CustomException(CustomError.AUDIO_ADD_FAILED, "Remote audio requires a positive duration")
@@ -486,7 +487,7 @@ def create_audio_segment(audio_path: str, start_time: int, segment_duration: int
     远程 URL 直写模式下需显式构建 AudioMaterial 并传入 duration，
     避免 AudioSegment 内部用路径字符串构造素材时因缺少时长而失败。
     """
-    if config.USE_REMOTE_MEDIA_URL:
+    if use_remote_media_url():
         material_duration = max(int(audio.get("duration") or segment_duration), int(segment_duration))
         audio_material = draft.AudioMaterial(audio_path, duration=material_duration)
         return draft.AudioSegment(

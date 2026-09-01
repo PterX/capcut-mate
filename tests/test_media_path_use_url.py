@@ -11,7 +11,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-import config
 from src.service.add_audios import (
     add_audio_to_draft,
     _prepare_audios_local_files,
@@ -29,6 +28,7 @@ from src.schemas.add_images import AddImagesRequest
 from src.schemas.add_videos import AddVideosRequest
 from src.schemas.add_audios import AddAudiosRequest
 from src.schemas.easy_create_material import EasyCreateMaterialRequest
+from src.utils.media import use_remote_media_url
 
 
 @pytest.fixture
@@ -46,14 +46,14 @@ def draft_ctx():
 
 @pytest.fixture
 def enable_remote_url(monkeypatch):
-    """开启远程 URL 直写模式。"""
-    monkeypatch.setattr(config, "USE_REMOTE_MEDIA_URL", True)
+    """开启远程 URL 直写模式（通过环境变量注入）。"""
+    monkeypatch.setenv("USE_REMOTE_MEDIA_URL", "true")
 
 
 @pytest.fixture
 def disable_remote_url(monkeypatch):
     """关闭远程 URL 直写模式（默认本地下载）。"""
-    monkeypatch.setattr(config, "USE_REMOTE_MEDIA_URL", False)
+    monkeypatch.setenv("USE_REMOTE_MEDIA_URL", "false")
 
 
 # ---------- 底层素材类 ----------
@@ -411,12 +411,15 @@ def test_easy_create_material_schema_rejects_non_http_optional_media_url():
         )
 
 
-def test_config_use_remote_media_url_default_is_false():
-    """环境变量默认应为关闭，保持与现有 main 行为一致。"""
-    # 直接读取模块当前值可能被其他测试 monkeypatch，这里验证默认解析逻辑
-    import os
-    raw = os.getenv("USE_REMOTE_MEDIA_URL", "false").strip().lower() == "true"
-    # 未设置环境变量时必须为 False
-    if "USE_REMOTE_MEDIA_URL" not in os.environ:
-        assert raw is False
-    assert isinstance(config.USE_REMOTE_MEDIA_URL, bool)
+def test_use_remote_media_url_default_is_false(monkeypatch):
+    """未设置环境变量时，开关默认关闭，保持与现有 main 行为一致。"""
+    monkeypatch.delenv("USE_REMOTE_MEDIA_URL", raising=False)
+    assert use_remote_media_url() is False
+
+
+def test_use_remote_media_url_reads_env_case_insensitively(monkeypatch):
+    """环境变量大小写不敏感，true/TRUE/True 均视为开启。"""
+    monkeypatch.setenv("USE_REMOTE_MEDIA_URL", "TRUE")
+    assert use_remote_media_url() is True
+    monkeypatch.setenv("USE_REMOTE_MEDIA_URL", "false")
+    assert use_remote_media_url() is False

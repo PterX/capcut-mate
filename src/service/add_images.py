@@ -21,6 +21,7 @@ import os
 from src.utils import helper
 from src.utils.download import download
 import config
+from src.utils.media import use_remote_media_url
 import json
 import asyncio
 import time
@@ -110,7 +111,7 @@ def _prepare_images_local_files(draft_url: str, image_infos: str) -> List[Dict[s
         raise CustomException(CustomError.INVALID_IMAGE_INFO)
 
     # 远程 URL 直写模式：跳过本地下载
-    if config.USE_REMOTE_MEDIA_URL:
+    if use_remote_media_url():
         logger.info(f"USE_REMOTE_MEDIA_URL enabled, skip image download, count: {len(images)}")
         return images
 
@@ -148,7 +149,7 @@ def _add_images_internal(
     draft_dir = os.path.join(config.DRAFT_DIR, draft_id)
     draft_image_dir = os.path.join(draft_dir, "assets", "images")
     # 本地下载模式才需要确保图片资源目录存在
-    if not config.USE_REMOTE_MEDIA_URL:
+    if not use_remote_media_url():
         os.makedirs(name=draft_image_dir, exist_ok=True)
         logger.info(f"Using image directory: {draft_image_dir}")
 
@@ -362,7 +363,7 @@ def add_image_to_draft(
         )
 
         # 远程 URL 直写模式：草稿中保留原始 URL，显式构建 VideoMaterial 并传入元数据
-        if config.USE_REMOTE_MEDIA_URL:
+        if use_remote_media_url():
             image_path = image["image_url"]
             logger.info(f"USE_REMOTE_MEDIA_URL enabled, using image URL: {image_path}")
             image_material = draft.VideoMaterial(

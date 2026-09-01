@@ -96,3 +96,16 @@ def get_media_duration_formatted(file_path: str) -> Optional[str]:
     milliseconds = int((total_seconds % 1) * 1000)
     
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}.{milliseconds:03d}"
+
+
+def use_remote_media_url() -> bool:
+    """是否启用远程媒体 URL 直写模式（仅读环境变量，默认关闭）。
+
+    环境变量 USE_REMOTE_MEDIA_URL（true / false，大小写不敏感）：
+    - 关闭（默认）：add_videos / add_images / add_audios / easy_create_material
+      将资源下载到本地，并在草稿中写入本地绝对路径；
+    - 开启：不下载资源，仅在草稿中写入原始 http(s) URL。
+
+    每次调用实时读取环境变量，便于测试注入与运行时调整。
+    """
+    return os.getenv("USE_REMOTE_MEDIA_URL", "false").strip().lower() == "true"

@@ -11,6 +11,7 @@ from src.utils.draft_cache import DRAFT_CACHE
 from exceptions import CustomException, CustomError
 from src.utils import helper
 import config
+from src.utils.media import use_remote_media_url
 from src.utils.draft_lock_manager import DraftLockManager
 
 
@@ -196,7 +197,7 @@ def add_video_material(script: ScriptFile, draft_id: str, video_url: str) -> boo
         
         # 1. 本地下载模式才创建视频资源目录
         draft_video_dir = ""
-        if not config.USE_REMOTE_MEDIA_URL:
+        if not use_remote_media_url():
             draft_dir = os.path.join(config.DRAFT_DIR, draft_id)
             draft_video_dir = os.path.join(draft_dir, "assets", "videos")
             os.makedirs(name=draft_video_dir, exist_ok=True)
@@ -256,7 +257,7 @@ def add_image_material(script: ScriptFile, draft_id: str, img_url: str) -> bool:
         
         # 1. 本地下载模式才创建图片资源目录
         draft_image_dir = ""
-        if not config.USE_REMOTE_MEDIA_URL:
+        if not use_remote_media_url():
             draft_dir = os.path.join(config.DRAFT_DIR, draft_id)
             draft_image_dir = os.path.join(draft_dir, "assets", "images")
             os.makedirs(name=draft_image_dir, exist_ok=True)
@@ -314,7 +315,7 @@ def add_audio_material(script: ScriptFile, draft_id: str, audio_url: str) -> boo
         
         # 1. 本地下载模式才创建音频资源目录
         draft_audio_dir = ""
-        if not config.USE_REMOTE_MEDIA_URL:
+        if not use_remote_media_url():
             draft_dir = os.path.join(config.DRAFT_DIR, draft_id)
             draft_audio_dir = os.path.join(draft_dir, "assets", "audios")
             os.makedirs(name=draft_audio_dir, exist_ok=True)

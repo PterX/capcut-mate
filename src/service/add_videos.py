@@ -24,6 +24,7 @@ from src.schemas.add_videos import SegmentInfo
 from src.utils import helper
 from src.utils.download import download
 import config
+from src.utils.media import use_remote_media_url
 import json
 import time
 from typing import List, Dict, Any, Tuple, Optional
@@ -117,7 +118,7 @@ def _prepare_videos_local_files(draft_url: str, video_infos: str) -> List[Dict[s
         raise CustomException(CustomError.INVALID_VIDEO_INFO)
 
     # 远程 URL 直写模式：跳过本地下载
-    if config.USE_REMOTE_MEDIA_URL:
+    if use_remote_media_url():
         for video in videos:
             video["original_start"] = video["start"]
             video["original_end"] = video["end"]
@@ -268,7 +269,7 @@ def _add_videos_internal(
     # 2. 创建保存视频资源的目录（URL 直写模式下仍可创建空目录，不影响行为）
     draft_dir = os.path.join(config.DRAFT_DIR, draft_id)
     draft_video_dir = os.path.join(draft_dir, "assets", "videos")
-    if not config.USE_REMOTE_MEDIA_URL:
+    if not use_remote_media_url():
         os.makedirs(name=draft_video_dir, exist_ok=True)
 
     if prepared_videos is not None:
@@ -417,7 +418,7 @@ def add_video_to_draft(
     """
     try:
         # 远程 URL 直写模式：草稿中保留原始 URL，用请求参数填充元数据，不做本地下载/探测
-        if config.USE_REMOTE_MEDIA_URL:
+        if use_remote_media_url():
             video_path = video["video_url"]
             video_material = draft.VideoMaterial(
                 video_path,
