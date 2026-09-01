@@ -100,21 +100,33 @@ def add_videos(
 
 def _prepare_videos_local_files(draft_url: str, video_infos: str) -> List[Dict[str, Any]]:
     """
-    校验草稿、解析 video_infos、规范化时间字段并下载素材到草稿目录。
+    校验草稿、解析 video_infos、规范化时间字段。
     不含对 ScriptFile 的修改，可在草稿写锁外调用。
+
+    行为受环境变量 USE_REMOTE_MEDIA_URL 控制：
+    - 关闭（默认）：下载素材到草稿目录，写入 local_video_path；
+    - 开启：不下载，仅解析并规范化时间字段（草稿中将写入原始 URL）。
     """
     draft_id = helper.get_url_param(draft_url, "draft_id")
     if (not draft_id) or (draft_id not in DRAFT_CACHE):
         raise CustomException(CustomError.INVALID_DRAFT_URL)
 
-    draft_dir = os.path.join(config.DRAFT_DIR, draft_id)
-    draft_video_dir = os.path.join(draft_dir, "assets", "videos")
-    os.makedirs(name=draft_video_dir, exist_ok=True)
-
     videos = parse_video_data(json_str=video_infos)
     if len(videos) == 0:
         logger.info(f"No video info, draft_id: {draft_id}")
         raise CustomException(CustomError.INVALID_VIDEO_INFO)
+
+    # 远程 URL 直写模式：跳过本地下载
+    if config.USE_REMOTE_MEDIA_URL:
+        for video in videos:
+            video["original_start"] = video["start"]
+            video["original_end"] = video["end"]
+        logger.info(f"USE_REMOTE_MEDIA_URL enabled, skip video download, count: {len(videos)}")
+        return videos
+
+    draft_dir = os.path.join(config.DRAFT_DIR, draft_id)
+    draft_video_dir = os.path.join(draft_dir, "assets", "videos")
+    os.makedirs(name=draft_video_dir, exist_ok=True)
 
     for video in videos:
         video["original_start"] = video["start"]
@@ -253,10 +265,11 @@ def _add_videos_internal(
     if (not draft_id) or (draft_id not in DRAFT_CACHE):
         raise CustomException(CustomError.INVALID_DRAFT_URL)
 
-    # 2. 创建保存视频资源的目录
+    # 2. 创建保存视频资源的目录（URL 直写模式下仍可创建空目录，不影响行为）
     draft_dir = os.path.join(config.DRAFT_DIR, draft_id)
     draft_video_dir = os.path.join(draft_dir, "assets", "videos")
-    os.makedirs(name=draft_video_dir, exist_ok=True)
+    if not config.USE_REMOTE_MEDIA_URL:
+        os.makedirs(name=draft_video_dir, exist_ok=True)
 
     if prepared_videos is not None:
         videos = prepared_videos
@@ -403,15 +416,26 @@ def add_video_to_draft(
         actual_duration: 视频在轨道上的实际播放时长(微秒)，考虑变速后的时长
     """
     try:
-        video_path = video.get("local_video_path")
-        if video_path:
-            if not os.path.isfile(video_path):
-                raise CustomException(CustomError.VIDEO_ADD_FAILED, f"Missing local file: {video_path}")
+        # 远程 URL 直写模式：草稿中保留原始 URL，用请求参数填充元数据，不做本地下载/探测
+        if config.USE_REMOTE_MEDIA_URL:
+            video_path = video["video_url"]
+            video_material = draft.VideoMaterial(
+                video_path,
+                duration=int(video.get("duration", video["end"] - video["start"])),
+                width=int(video.get("width") or script.width),
+                height=int(video.get("height") or script.height),
+                material_type="video",
+            )
         else:
-            video_path = download(url=video["video_url"], save_dir=draft_video_dir)
+            video_path = video.get("local_video_path")
+            if video_path:
+                if not os.path.isfile(video_path):
+                    raise CustomException(CustomError.VIDEO_ADD_FAILED, f"Missing local file: {video_path}")
+            else:
+                video_path = download(url=video["video_url"], save_dir=draft_video_dir)
 
-        # 1. 创建视频素材
-        video_material = draft.VideoMaterial(video_path)
+            # 1. 创建视频素材（本地文件模式，通过 mediainfo 探测）
+            video_material = draft.VideoMaterial(video_path)
         
         # 2. 获取视频播放时长（target duration）
         target_duration = video.get('duration', video['end'] - video['start'])

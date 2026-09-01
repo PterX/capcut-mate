@@ -92,23 +92,32 @@ def add_images(
 
 def _prepare_images_local_files(draft_url: str, image_infos: str) -> List[Dict[str, Any]]:
     """
-    校验草稿、解析 image_infos 并下载素材到草稿目录。
+    校验草稿、解析 image_infos。
     不修改 ScriptFile，可在草稿写锁外调用。
+
+    行为受环境变量 USE_REMOTE_MEDIA_URL 控制：
+    - 关闭（默认）：下载素材到草稿目录，写入 local_image_path；
+    - 开启：不下载，仅解析（草稿中将写入原始 URL）。
     """
     draft_id = helper.get_url_param(draft_url, "draft_id")
     if (not draft_id) or (draft_id not in DRAFT_CACHE):
         logger.error(f"Invalid draft URL or draft not found in cache, draft_id: {draft_id}")
         raise CustomException(CustomError.INVALID_DRAFT_URL)
 
-    draft_dir = os.path.join(config.DRAFT_DIR, draft_id)
-    draft_image_dir = os.path.join(draft_dir, "assets", "images")
-    os.makedirs(name=draft_image_dir, exist_ok=True)
-    logger.info(f"Created image directory: {draft_image_dir}")
-
     images = parse_image_data(json_str=image_infos)
     if len(images) == 0:
         logger.error(f"No image info provided, draft_id: {draft_id}")
         raise CustomException(CustomError.INVALID_IMAGE_INFO)
+
+    # 远程 URL 直写模式：跳过本地下载
+    if config.USE_REMOTE_MEDIA_URL:
+        logger.info(f"USE_REMOTE_MEDIA_URL enabled, skip image download, count: {len(images)}")
+        return images
+
+    draft_dir = os.path.join(config.DRAFT_DIR, draft_id)
+    draft_image_dir = os.path.join(draft_dir, "assets", "images")
+    os.makedirs(name=draft_image_dir, exist_ok=True)
+    logger.info(f"Created image directory: {draft_image_dir}")
 
     for image in images:
         image["local_image_path"] = download(url=image["image_url"], save_dir=draft_image_dir)
@@ -138,8 +147,10 @@ def _add_images_internal(
 
     draft_dir = os.path.join(config.DRAFT_DIR, draft_id)
     draft_image_dir = os.path.join(draft_dir, "assets", "images")
-    os.makedirs(name=draft_image_dir, exist_ok=True)
-    logger.info(f"Using image directory: {draft_image_dir}")
+    # 本地下载模式才需要确保图片资源目录存在
+    if not config.USE_REMOTE_MEDIA_URL:
+        os.makedirs(name=draft_image_dir, exist_ok=True)
+        logger.info(f"Using image directory: {draft_image_dir}")
 
     if prepared_images is not None:
         images = prepared_images
@@ -328,15 +339,6 @@ def add_image_to_draft(
         CustomException: 添加图片失败
     """
     try:
-        image_path = image.get("local_image_path")
-        if image_path:
-            if not os.path.isfile(image_path):
-                raise CustomException(CustomError.IMAGE_ADD_FAILED, f"Missing local file: {image_path}")
-            logger.info(f"Using local image: {image_path}")
-        else:
-            image_path = download(url=image["image_url"], save_dir=draft_image_dir)
-            logger.info(f"Downloaded image from {image['image_url']} to {image_path}")
-
         # 2. 创建图片素材并添加到草稿
         segment_duration = image['end'] - image['start']
                 
@@ -358,13 +360,39 @@ def add_image_to_draft(
             transform_x=transform_x / draft_width,  # 转为半画布宽单位
             transform_y=transform_y / draft_height  # 转换为半画布高单位
         )
-        
-        # 创建视频片段（图片使用VideoSegment）
-        video_segment = draft.VideoSegment(
-            material=image_path,
-            target_timerange=trange(start=image['start'], duration=segment_duration),
-            clip_settings=clip_settings
-        )
+
+        # 远程 URL 直写模式：草稿中保留原始 URL，显式构建 VideoMaterial 并传入元数据
+        if config.USE_REMOTE_MEDIA_URL:
+            image_path = image["image_url"]
+            logger.info(f"USE_REMOTE_MEDIA_URL enabled, using image URL: {image_path}")
+            image_material = draft.VideoMaterial(
+                image_path,
+                duration=segment_duration,
+                width=image_width,
+                height=image_height,
+                material_type="photo",
+            )
+            video_segment = draft.VideoSegment(
+                material=image_material,
+                target_timerange=trange(start=image['start'], duration=segment_duration),
+                clip_settings=clip_settings
+            )
+        else:
+            image_path = image.get("local_image_path")
+            if image_path:
+                if not os.path.isfile(image_path):
+                    raise CustomException(CustomError.IMAGE_ADD_FAILED, f"Missing local file: {image_path}")
+                logger.info(f"Using local image: {image_path}")
+            else:
+                image_path = download(url=image["image_url"], save_dir=draft_image_dir)
+                logger.info(f"Downloaded image from {image['image_url']} to {image_path}")
+
+            # 创建视频片段（图片使用VideoSegment，本地路径由内部构造 VideoMaterial）
+            video_segment = draft.VideoSegment(
+                material=image_path,
+                target_timerange=trange(start=image['start'], duration=segment_duration),
+                clip_settings=clip_settings
+            )
         
         # 3. 添加动画效果（如果指定了）
         if image.get('in_animation'):

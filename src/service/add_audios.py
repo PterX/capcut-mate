@@ -52,13 +52,23 @@ def add_audios(
 
 def _prepare_audios_local_files(draft_url: str, audio_infos: str) -> List[Dict[str, Any]]:
     """
-    校验草稿、解析 audio_infos 并下载素材到草稿目录。
+    校验草稿、解析 audio_infos。
     不修改 ScriptFile，可在草稿写锁外调用。
+
+    行为受环境变量 USE_REMOTE_MEDIA_URL 控制：
+    - 关闭（默认）：下载素材到草稿目录，写入 local_audio_path；
+    - 开启：不下载，仅解析（草稿中将写入原始 URL）。
     """
     draft_id = validate_and_get_draft_id(draft_url)
-    draft_audio_dir = create_audio_directory(draft_id)
     audios = parse_audio_data(json_str=audio_infos)
     validate_audio_data(audios, draft_id)
+
+    # 远程 URL 直写模式：跳过本地下载
+    if config.USE_REMOTE_MEDIA_URL:
+        logger.info(f"USE_REMOTE_MEDIA_URL enabled, skip audio download, count: {len(audios)}")
+        return audios
+
+    draft_audio_dir = create_audio_directory(draft_id)
     for audio in audios:
         audio["local_audio_path"] = download_audio_file(audio, draft_audio_dir)
     return audios
@@ -74,7 +84,8 @@ def _add_audios_internal(
     draft_id = validate_and_get_draft_id(draft_url)
     script: ScriptFile = DRAFT_CACHE[draft_id]
 
-    draft_audio_dir = create_audio_directory(draft_id)
+    # 本地下载模式才创建音频资源目录
+    draft_audio_dir = "" if config.USE_REMOTE_MEDIA_URL else create_audio_directory(draft_id)
 
     if prepared_audios is not None:
         audios = prepared_audios
@@ -337,17 +348,24 @@ def add_audio_to_draft(
         CustomException: 添加音频失败
     """
     try:
-        audio_path = audio.get("local_audio_path")
-        if audio_path:
-            if not os.path.isfile(audio_path):
-                raise CustomException(
-                    CustomError.AUDIO_ADD_FAILED,
-                    f"Missing local file: {audio_path}",
-                )
-            logger.info(f"Using local audio: {audio_path}")
+        # 远程 URL 直写模式：草稿中保留原始 URL，时长取自请求参数，不做本地下载/探测
+        if config.USE_REMOTE_MEDIA_URL:
+            audio_path = audio["audio_url"]
+            logger.info(f"USE_REMOTE_MEDIA_URL enabled, using audio URL: {audio_path}")
+            fallback_duration = int(audio.get("duration") or (audio["end"] - audio["start"]))
+            actual_duration = get_audio_actual_duration(fallback_duration=fallback_duration)
         else:
-            audio_path = download_audio_file(audio, draft_audio_dir)
-        actual_duration = get_audio_actual_duration(audio_path)
+            audio_path = audio.get("local_audio_path")
+            if audio_path:
+                if not os.path.isfile(audio_path):
+                    raise CustomException(
+                        CustomError.AUDIO_ADD_FAILED,
+                        f"Missing local file: {audio_path}",
+                    )
+                logger.info(f"Using local audio: {audio_path}")
+            else:
+                audio_path = download_audio_file(audio, draft_audio_dir)
+            actual_duration = get_audio_actual_duration(audio_path=audio_path)
         
         # 2. 处理音频时长参数
         process_audio_duration(audio, actual_duration)
@@ -388,8 +406,25 @@ def download_audio_file(audio: dict, draft_audio_dir: str) -> str:
     return audio_path
 
 
-def get_audio_actual_duration(audio_path: str) -> int:
-    """获取音频的实际时长"""
+def get_audio_actual_duration(
+    audio_path: Optional[str] = None,
+    fallback_duration: Optional[int] = None,
+) -> int:
+    """获取音频的实际时长。
+
+    - 本地下载模式：通过 AudioMaterial 探测本地文件时长；
+    - 远程 URL 直写模式：使用调用方传入的 fallback_duration（通常来自请求参数）。
+    """
+    # 远程 URL 直写模式：不进行本地素材探测
+    if config.USE_REMOTE_MEDIA_URL:
+        resolved = int(fallback_duration or 0)
+        if resolved <= 0:
+            raise CustomException(CustomError.AUDIO_ADD_FAILED, "Remote audio requires a positive duration")
+        logger.info(f"Using fallback remote audio duration: {resolved} microseconds")
+        return resolved
+
+    if not audio_path:
+        raise CustomException(CustomError.AUDIO_ADD_FAILED, "Local audio path is required")
     temp_material = AudioMaterial(audio_path)
     actual_duration = temp_material.duration
     logger.info(f"Actual audio duration: {actual_duration} microseconds")
@@ -446,13 +481,25 @@ def update_audio_time_params(audio: dict, start_time: int, end_time: int):
 
 
 def create_audio_segment(audio_path: str, start_time: int, segment_duration: int, audio: dict):
-    """创建音频片段对象"""
-    audio_segment = draft.AudioSegment(
+    """创建音频片段对象。
+
+    远程 URL 直写模式下需显式构建 AudioMaterial 并传入 duration，
+    避免 AudioSegment 内部用路径字符串构造素材时因缺少时长而失败。
+    """
+    if config.USE_REMOTE_MEDIA_URL:
+        material_duration = max(int(audio.get("duration") or segment_duration), int(segment_duration))
+        audio_material = draft.AudioMaterial(audio_path, duration=material_duration)
+        return draft.AudioSegment(
+            material=audio_material,
+            target_timerange=trange(start=start_time, duration=segment_duration),
+            volume=audio['volume']
+        )
+
+    return draft.AudioSegment(
         material=audio_path,
         target_timerange=trange(start=start_time, duration=segment_duration),
         volume=audio['volume']
     )
-    return audio_segment
 
 
 def add_segment_with_overlap_handling(script: ScriptFile, track_name: str, audio_segment, audio_path: str, start_time: int, segment_duration: int, audio: dict):
@@ -474,11 +521,9 @@ def add_segment_with_overlap_handling(script: ScriptFile, track_name: str, audio
                     adjusted_start = start_time + offset
                     logger.info(f"Attempt {attempts + 1}: Adjusting segment start time from {start_time} to {adjusted_start}")
                     
-                    # 重新创建片段，使用调整后的时间
-                    adjusted_audio_segment = draft.AudioSegment(
-                        material=audio_path,
-                        target_timerange=trange(start=adjusted_start, duration=segment_duration),
-                        volume=audio['volume']
+                    # 重新创建片段，使用调整后的时间（URL 模式同样显式传入 duration）
+                    adjusted_audio_segment = create_audio_segment(
+                        audio_path, adjusted_start, segment_duration, audio
                     )
                     
                     # 再次尝试添加片段

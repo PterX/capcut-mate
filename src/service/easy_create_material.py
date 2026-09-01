@@ -179,9 +179,9 @@ def add_video_material(script: ScriptFile, draft_id: str, video_url: str) -> boo
     添加视频素材到草稿（固定5秒时长）
     
     与add_videos接口保持一致的处理方式：
-    1. 创建规范的视频资源目录
+    1. 本地下载模式：创建规范的视频资源目录
     2. 使用parse_video_data解析视频信息
-    3. 调用add_video_to_draft添加视频
+    3. 调用add_video_to_draft添加视频（受 USE_REMOTE_MEDIA_URL 控制是否下载）
     
     Args:
         script: 草稿文件对象
@@ -194,11 +194,13 @@ def add_video_material(script: ScriptFile, draft_id: str, video_url: str) -> boo
     try:
         logger.info(f"Adding video material: {video_url}")
         
-        # 1. 创建视频资源目录（与add_videos保持一致）
-        draft_dir = os.path.join(config.DRAFT_DIR, draft_id)
-        draft_video_dir = os.path.join(draft_dir, "assets", "videos")
-        os.makedirs(name=draft_video_dir, exist_ok=True)
-        logger.info(f"Created video directory: {draft_video_dir}")
+        # 1. 本地下载模式才创建视频资源目录
+        draft_video_dir = ""
+        if not config.USE_REMOTE_MEDIA_URL:
+            draft_dir = os.path.join(config.DRAFT_DIR, draft_id)
+            draft_video_dir = os.path.join(draft_dir, "assets", "videos")
+            os.makedirs(name=draft_video_dir, exist_ok=True)
+            logger.info(f"Created video directory: {draft_video_dir}")
         
         # 2. 构造视频信息JSON（固定5秒时长）
         video_infos = json.dumps([{
@@ -223,7 +225,7 @@ def add_video_material(script: ScriptFile, draft_id: str, video_url: str) -> boo
         script.add_track_ordered(track_type=TrackType.video, track_name=track_name)
         logger.info(f"Added video track: {track_name}")
         
-        # 5. 添加视频到轨道（传递正确的视频资源目录）
+        # 5. 添加视频到轨道（URL 模式下 draft_video_dir 可为空字符串）
         add_video_to_draft(script, track_name, draft_video_dir, video_items[0])
         
         return True
@@ -237,9 +239,9 @@ def add_image_material(script: ScriptFile, draft_id: str, img_url: str) -> bool:
     添加图片素材到草稿
     
     与add_images接口保持一致的处理方式：
-    1. 创建规范的图片资源目录
+    1. 本地下载模式：创建规范的图片资源目录
     2. 使用parse_image_data解析图片信息
-    3. 调用add_image_to_draft添加图片
+    3. 调用add_image_to_draft添加图片（受 USE_REMOTE_MEDIA_URL 控制是否下载）
     
     Args:
         script: 草稿文件对象
@@ -252,11 +254,13 @@ def add_image_material(script: ScriptFile, draft_id: str, img_url: str) -> bool:
     try:
         logger.info(f"Adding image material: {img_url}")
         
-        # 1. 创建图片资源目录（与add_images保持一致）
-        draft_dir = os.path.join(config.DRAFT_DIR, draft_id)
-        draft_image_dir = os.path.join(draft_dir, "assets", "images")
-        os.makedirs(name=draft_image_dir, exist_ok=True)
-        logger.info(f"Created image directory: {draft_image_dir}")
+        # 1. 本地下载模式才创建图片资源目录
+        draft_image_dir = ""
+        if not config.USE_REMOTE_MEDIA_URL:
+            draft_dir = os.path.join(config.DRAFT_DIR, draft_id)
+            draft_image_dir = os.path.join(draft_dir, "assets", "images")
+            os.makedirs(name=draft_image_dir, exist_ok=True)
+            logger.info(f"Created image directory: {draft_image_dir}")
         
         # 2. 构造图片信息JSON（默认尺寸和3秒显示时长）
         image_infos = json.dumps([{
@@ -279,7 +283,7 @@ def add_image_material(script: ScriptFile, draft_id: str, img_url: str) -> bool:
         script.add_track_ordered(track_type=TrackType.video, track_name=track_name)
         logger.info(f"Added image track: {track_name}")
         
-        # 5. 添加图片到轨道（传递正确的图片资源目录）
+        # 5. 添加图片到轨道（URL 模式下 draft_image_dir 可为空字符串）
         add_image_to_draft(script, track_name, draft_image_dir, image_items[0])
         
         return True
@@ -293,9 +297,9 @@ def add_audio_material(script: ScriptFile, draft_id: str, audio_url: str) -> boo
     添加音频素材到草稿（固定5秒时长）
     
     与add_audios接口保持一致的处理方式：
-    1. 创建规范的音频资源目录
+    1. 本地下载模式：创建规范的音频资源目录
     2. 使用parse_audio_data解析音频信息
-    3. 调用add_audio_to_draft添加音频
+    3. 调用add_audio_to_draft添加音频（受 USE_REMOTE_MEDIA_URL 控制是否下载）
     
     Args:
         script: 草稿文件对象
@@ -308,11 +312,13 @@ def add_audio_material(script: ScriptFile, draft_id: str, audio_url: str) -> boo
     try:
         logger.info(f"Adding audio material: {audio_url}")
         
-        # 1. 创建音频资源目录（与add_audios保持一致）
-        draft_dir = os.path.join(config.DRAFT_DIR, draft_id)
-        draft_audio_dir = os.path.join(draft_dir, "assets", "audios")
-        os.makedirs(name=draft_audio_dir, exist_ok=True)
-        logger.info(f"Created audio directory: {draft_audio_dir}")
+        # 1. 本地下载模式才创建音频资源目录
+        draft_audio_dir = ""
+        if not config.USE_REMOTE_MEDIA_URL:
+            draft_dir = os.path.join(config.DRAFT_DIR, draft_id)
+            draft_audio_dir = os.path.join(draft_dir, "assets", "audios")
+            os.makedirs(name=draft_audio_dir, exist_ok=True)
+            logger.info(f"Created audio directory: {draft_audio_dir}")
         
         # 2. 构造音频信息JSON（固定5秒时长）
         audio_infos = json.dumps([{
@@ -334,7 +340,7 @@ def add_audio_material(script: ScriptFile, draft_id: str, audio_url: str) -> boo
         script.add_track(track_type=TrackType.audio, track_name=track_name, relative_index=10)
         logger.info(f"Added audio track: {track_name}")
         
-        # 5. 添加音频到轨道（传递正确的音频资源目录）
+        # 5. 添加音频到轨道（URL 模式下 draft_audio_dir 可为空字符串）
         add_audio_to_draft(script, track_name, draft_audio_dir, audio_items[0])
         
         return True

@@ -18,6 +18,8 @@ services:
       - TIP_URL=https://docs.jcaigc.cn
       # 文件下载大小限制（字节），默认200MB（209715200）
       - DOWNLOAD_FILE_SIZE_LIMIT=209715200
+      # 远程媒体 URL 直写模式：false=下载到本地（默认）；true=草稿仅写入 URL，不下载
+      - USE_REMOTE_MEDIA_URL=false
     networks:
       - capcut-mate-network
     mem_limit: 1G

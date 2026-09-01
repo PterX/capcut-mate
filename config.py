@@ -79,5 +79,11 @@ STORAGE_UPLOAD_PREFIX = os.getenv("STORAGE_UPLOAD_PREFIX", "")
 # APIKEY启用配置-默认启用 -- 云渲染必需配置（环境变量 true / false，大小写不敏感）
 ENABLE_APIKEY = os.getenv("ENABLE_APIKEY", "true").strip().lower() == "true"
 
+# 远程媒体 URL 直写模式开关（环境变量 true / false，大小写不敏感）
+# 默认关闭：与现有 main 行为一致，add_videos / add_images / add_audios / easy_create_material
+# 会将资源下载到本地，并在草稿中写入本地绝对路径。
+# 开启后：与 pro 分支行为一致，不下载资源，仅在草稿中写入原始 http(s) URL。
+USE_REMOTE_MEDIA_URL = os.getenv("USE_REMOTE_MEDIA_URL", "false").strip().lower() == "true"
+
 # 文件下载大小限制（字节），默认200MB
 DOWNLOAD_FILE_SIZE_LIMIT = int(os.getenv("DOWNLOAD_FILE_SIZE_LIMIT", str(200 * 1024 * 1024)))
