@@ -21,7 +21,7 @@ services:
       # 草稿清理策略（本模块内定义；保留数量可由环境变量 DRAFT_CLEANUP_MAX_DRAFT_COUNT 覆盖，默认 1000）
       - DRAFT_CLEANUP_MAX_DRAFT_COUNT=6000
       # 远程媒体 URL 直写模式：false=下载到本地（默认）；true=草稿仅写入 URL，不下载
-      - USE_REMOTE_MEDIA_URL=false      
+      - USE_REMOTE_MEDIA_URL=false
     networks:
       - capcut-mate-network
     mem_limit: 1G
