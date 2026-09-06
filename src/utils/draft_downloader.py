@@ -217,8 +217,14 @@ _REQUEST_HEADERS = {
     ),
 }
 
-# 网关/限流等暂时不可用，退避重试有效（与 desktop-client 一致；不含 500 等持久故障）
-_RETRYABLE_TRANSIENT_HTTP_STATUSES = frozenset({408, 429, 502, 503, 504})
+# 网关/限流等暂时不可用，退避重试有效（与 desktop-client 一致；不含 500 等持久故障）。
+# 416 不是「文件不存在」：常见于 CDN/Nginx 把上次 Range 续传的 416 缓存后，
+# 后续不带 Range 的 GET 仍返回 416，属于偶发瞬时错误，应重试而非直接失败。
+_RETRYABLE_TRANSIENT_HTTP_STATUSES = frozenset({408, 416, 429, 502, 503, 504})
+_NO_CACHE_HEADERS = {
+    "Cache-Control": "no-cache",
+    "Pragma": "no-cache",
+}
 _TRANSIENT_HTTP_BACKOFF_MAX_SECONDS = 30
 _DEFAULT_NETWORK_RETRY_DELAY_SECONDS = 1.0
 
@@ -236,6 +242,13 @@ _INVISIBLE_URL_CHARS = ("\ufeff", "\u200b", "\u200c", "\u200d")
 
 def _is_retryable_http_status(status_code: int) -> bool:
     return status_code in _RETRYABLE_TRANSIENT_HTTP_STATUSES
+
+
+def _with_no_cache_headers(extra_headers: Optional[Dict[str, str]]) -> Dict[str, str]:
+    """416 重试时绕过网关对失败 Range 响应的缓存。"""
+    headers = dict(extra_headers or {})
+    headers.update(_NO_CACHE_HEADERS)
+    return headers
 
 
 def _normalize_http_url(url: str) -> str:
@@ -423,7 +436,7 @@ def _recover_from_unsatisfiable_range(
     """处理 Range 续传收到的 HTTP 416。
 
     本地已下完时返回 ``complete``；半成品越界则删掉并返回 ``restart``；
-    非续传 416 返回 None，由调用方按资源不可用处理。
+    非续传 416 返回 None，由调用方按瞬时错误重试（并绕过网关缓存）。
     """
     if status_code != 416 or resume_from <= 0 or not local_path:
         return None
@@ -879,6 +892,7 @@ def _download_single_file(file_url: str, target_dir: str) -> None:
     full_file_path, url_draft_id = _resolve_download_target_path(file_url, target_dir)
     # 仅视频/图片/音频走 Range 续传；json 等仍每次整文件覆盖下载。
     enable_resume = _is_media_resource(file_url) or _is_media_resource(full_file_path)
+    bypass_cache = False
 
     while retry_count <= _MAX_RETRIES:
         try:
@@ -892,6 +906,8 @@ def _download_single_file(file_url: str, target_dir: str) -> None:
                         resume_from,
                         file_url,
                     )
+            if bypass_cache:
+                extra_headers = _with_no_cache_headers(extra_headers)
 
             get_kwargs = {
                 "timeout": (_REQUEST_CONNECT_TIMEOUT, _REQUEST_READ_TIMEOUT),
@@ -904,6 +920,8 @@ def _download_single_file(file_url: str, target_dir: str) -> None:
             response = _http_get(file_url, **get_kwargs)
             try:
                 if not _is_download_success_status(response.status_code, resume_from):
+                    if response.status_code == 416:
+                        bypass_cache = True
                     range_action = _recover_from_unsatisfiable_range(
                         response.status_code,
                         response.headers,
@@ -1246,6 +1264,7 @@ def _download_remote_material_raising(
     """下载 URL 素材；失败抛出 DraftDownloadAbort。"""
     # 本函数只拉取音视频/图片（含无扩展名的 CDN URL），始终允许断点续传。
     local_path: Optional[str] = None
+    bypass_cache = False
     for attempt in range(_MAX_RETRIES + 1):
         response = None
         try:
@@ -1259,6 +1278,8 @@ def _download_remote_material_raising(
                         resume_from,
                         file_url,
                     )
+            if bypass_cache:
+                extra_headers = _with_no_cache_headers(extra_headers)
 
             get_kwargs = {
                 "timeout": (_REQUEST_CONNECT_TIMEOUT, _REQUEST_READ_TIMEOUT),
@@ -1269,6 +1290,8 @@ def _download_remote_material_raising(
 
             response = _http_get(file_url, **get_kwargs)
             if not _is_download_success_status(response.status_code, resume_from):
+                if response.status_code == 416:
+                    bypass_cache = True
                 range_action = _recover_from_unsatisfiable_range(
                     response.status_code,
                     response.headers,
@@ -1398,6 +1421,7 @@ def _download_remote_file(file_url: str, local_path: str) -> bool:
 def _download_remote_file_raising(file_url: str, local_path: str) -> None:
     """下载单个 URL 素材；失败抛出 DraftDownloadAbort。"""
     enable_resume = _is_media_resource(file_url) or _is_media_resource(local_path)
+    bypass_cache = False
     for attempt in range(_MAX_RETRIES + 1):
         try:
             extra_headers = None
@@ -1410,6 +1434,8 @@ def _download_remote_file_raising(file_url: str, local_path: str) -> None:
                         resume_from,
                         file_url,
                     )
+            if bypass_cache:
+                extra_headers = _with_no_cache_headers(extra_headers)
 
             get_kwargs = {
                 "timeout": (_REQUEST_CONNECT_TIMEOUT, _REQUEST_READ_TIMEOUT),
@@ -1420,6 +1446,8 @@ def _download_remote_file_raising(file_url: str, local_path: str) -> None:
 
             response = _http_get(file_url, **get_kwargs)
             if not _is_download_success_status(response.status_code, resume_from):
+                if response.status_code == 416:
+                    bypass_cache = True
                 range_action = _recover_from_unsatisfiable_range(
                     response.status_code,
                     response.headers,

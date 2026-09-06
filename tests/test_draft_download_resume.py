@@ -318,7 +318,8 @@ class TestDownloadSingleFileResume:
             with open(out, "rb") as f:
                 assert f.read() == b"FULL"
 
-    def test_416_without_resume_is_still_resource_unavailable(self, no_sleep) -> None:
+    def test_416_without_resume_is_retried_then_exhausted(self, no_sleep) -> None:
+        """不带 Range 的 416 是网关瞬时错误，应重试而不是当成资源不存在。"""
         file_url = self._url("assets/images/pic.png")
         resp_416 = _stream_response([], status=416)
         with tempfile.TemporaryDirectory() as td:
@@ -327,9 +328,25 @@ class TestDownloadSingleFileResume:
                 m_req.exceptions = requests.exceptions
                 with pytest.raises(dd.DraftDownloadAbort) as ei:
                     dd._download_single_file(file_url, td)
-            assert ei.value.kind == dd.DraftDownloadFailureKind.RESOURCE_UNAVAILABLE
+            assert ei.value.kind == dd.DraftDownloadFailureKind.NETWORK_RETRY_EXHAUSTED
             assert ei.value.http_status == 416
-            assert m_req.get.call_count == 1
+            assert m_req.get.call_count == dd._MAX_RETRIES + 1
+            retry_headers = m_req.get.call_args_list[1].kwargs.get("headers") or {}
+            assert retry_headers.get("Cache-Control") == "no-cache"
+
+    def test_416_without_resume_then_200_succeeds(self, no_sleep) -> None:
+        file_url = self._url("assets/images/pic.png")
+        resp_416 = _stream_response([], status=416)
+        resp_ok = _stream_response([b"PNG"])
+        with tempfile.TemporaryDirectory() as td:
+            with patch.object(dd, "requests") as m_req:
+                m_req.get.side_effect = [resp_416, resp_ok]
+                m_req.exceptions = requests.exceptions
+                dd._download_single_file(file_url, td)
+            assert m_req.get.call_count == 2
+            out = os.path.join(td, "assets", "images", "pic.png")
+            with open(out, "rb") as f:
+                assert f.read() == b"PNG"
 
 
 class TestDownloadRemoteMaterialResume:
